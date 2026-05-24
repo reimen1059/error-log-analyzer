@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>エラーログ解析ツール</title>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>エラーログ解析ツール</h1>
+  <p>※ファイルを選択した場合は、テキスト欄よりファイル内容を優先して解析します。</p>
+  <textarea id="log" rows="10" cols="80" placeholder="エラーログを貼り付けてください"></textarea>
+  <p id="charCount">0 / 500 文字</p>
+  <br />
+  <input type="file" id="logFile" accept=".log,.txt" />
+  <br />
+  <br />
+
+  <button id="analyzeButton" onclick="analyzeLog()">解析する</button>
+
+  <h2>解析結果</h2>
+  <pre id="result"></pre>
+
+  <script>
+      const textArea = document.getElementById("log");
+      const fileInput = document.getElementById("logFile");
+      const resultArea = document.getElementById("result");
+      const charCount = document.getElementById("charCount");
+      const analyzeButton = document.getElementById("analyzeButton");
+      let MAX_LOG_LENGTH = 0;
+
+    fileInput.addEventListener("change", async function () {
+      if (fileInput.files.length === 0) {
+        return;
+      }
+
+      const file = fileInput.files[0];
+      const fileText = await file.text();
+
+      textArea.value = fileText;
+      updateCharCount();
+    });
+
+    textArea.addEventListener("input", updateCharCount);
+
+    function updateCharCount() {
+      const length = textArea.value.length;
+      charCount.textContent = `${length} / ${MAX_LOG_LENGTH} 文字`;
+
+      if (length > MAX_LOG_LENGTH) {
+        charCount.style.color = "red";
+        analyzeButton.disabled = true;
+      } else {
+        charCount.style.color = "black";
+        analyzeButton.disabled = false;
+      }
+    }
+
+    function renderResult(data) {
+      let severityColor = "";
+      let severityIcon = "";
+
+      if (data.severity === "high") {
+        severityColor = "red";
+        severityIcon = "🔴";
+      } else if (data.severity === "medium") {
+        severityColor = "orange";
+        severityIcon = "🟡";
+      } else {
+        severityColor = "green";
+        severityIcon = "🟢";
+      }
+      resultArea.innerHTML = `
+        <h3>解析結果</h3>
+
+        <p><strong>成功:</strong> ${data.success}</p>
+        <p><strong>Severity:</strong><span style="color:${severityColor}">${severityIcon} ${data.severity}</span></p>
+
+        <h4>概要</h4>
+        <p>${data.summary}</p>
+        <h4>原因</h4>
+        <p>${data.cause}</p>
+        <h4>解決方法</h4>
+        <p>${data.solution}</p>
+        <h4>再発防止</h4>
+        <p>${data.prevention}</p>
+        <hr>
+
+        <p>
+        トークン数:
+        入力 ${data.input_tokens} /
+        出力 ${data.output_tokens} /
+        合計 ${data.total_tokens}
+        </p>
+        `;
+    }
+
+    function showError(message) {
+      resultArea.innerHTML = `
+        <p style="color:red;">
+          エラー: ${message}
+        </p>
+      `;
+    }
+
+    async function callApi(log) {
+      const response = await fetch(
+        "http://127.0.0.1:8000/analyze",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            log: log
+          })
+        }
+      );
+      const data = await response.json();
+      return {
+        response,
+        data
+      };
+    }
+
+    async function loadConfig() {
+      const response = await fetch(
+        "http://127.0.0.1:8000/config"
+      );
+
+      const data = await response.json();
+      MAX_LOG_LENGTH = data.max_log_length;
+      updateCharCount();
+    }
+
+    async function analyzeLog() {
+      resultArea.textContent = "解析中...";
+
+      const log = textArea.value;
+
+      try {
+        const { response, data } =
+          await callApi(log);
+
+        if (!response.ok) {
+          let errorMessage = data.detail;
+
+          if (data.detail.includes("log is too long")) {
+            errorMessage =
+              "ログが長すぎます。";
+          } else if (
+            data.detail.includes("log is empty")
+          ) {
+            errorMessage =
+              "ログを入力してください。";
+          }
+
+          showError(errorMessage);
+          return;
+        }
+
+        renderResult(data);
+      } catch (error) {
+        console.error(error);
+        showError("通信エラーが発生しました。APIサーバーが起動しているか確認してください。");
+      }
+    }
+   
+    loadConfig();
+  </script>
+</body>
+</html>
