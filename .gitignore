@@ -21,3 +21,6 @@ Thumbs.db
 # TestFiles
 test.py
 testData*.txt
+
+# RAG
+knowledge_base.json

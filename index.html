@@ -16,10 +16,21 @@
   <br />
   <br />
 
+  <select id="mode">
+  <option value="rag">
+    RAG + Claude
+  </option>
+  <option value="claude">
+    Claude only
+  </option>
+</select>
   <button id="analyzeButton" onclick="analyzeLog()">解析する</button>
 
   <h2>解析結果</h2>
   <pre id="result"></pre>
+
+  <h2>解析履歴</h2>
+  <div id="history"></div>
 
   <script>
       const textArea = document.getElementById("log");
@@ -27,7 +38,10 @@
       const resultArea = document.getElementById("result");
       const charCount = document.getElementById("charCount");
       const analyzeButton = document.getElementById("analyzeButton");
+      const historyArea = document.getElementById("history");
+
       let MAX_LOG_LENGTH = 0;
+      let historyList = [];
 
     fileInput.addEventListener("change", async function () {
       if (fileInput.files.length === 0) {
@@ -70,6 +84,35 @@
         severityColor = "green";
         severityIcon = "🟢";
       }
+
+      const referencesHtml =
+        data.mode === "rag"
+          ? (
+              data.references && data.references.length > 0
+                ? `
+                  <div class="references">
+                    <h3>参照したナレッジ</h3>
+                    <ul>
+                      ${data.references.map(ref => `
+                        <li>
+                          <strong>${ref.title}</strong><br>
+                          スコア: ${ref.score}<br>
+                          一致率: ${(ref.match_rate * 100).toFixed(0)}%<br>
+                          一致キーワード: ${ref.matched_keywords.join(", ")}
+                        </li>
+                      `).join("")}
+                    </ul>
+                  </div>
+                `
+                : `
+                  <div class="references">
+                    <h3>参照したナレッジ</h3>
+                    <p>該当なし</p>
+                  </div>
+                `
+            )
+          : "";
+
       resultArea.innerHTML = `
         <h3>解析結果</h3>
 
@@ -92,7 +135,8 @@
         出力 ${data.output_tokens} /
         合計 ${data.total_tokens}
         </p>
-        `;
+        ${referencesHtml}
+        `;      
     }
 
     function showError(message) {
@@ -103,7 +147,26 @@
       `;
     }
 
+    function renderHistory() {
+      if (historyList.length === 0) {
+        historyArea.innerHTML = "<p>履歴はまだありません。</p>";
+        return;
+      }
+
+      historyArea.innerHTML = historyList
+        .map((item, index) => {
+          return `
+            <div class="history-item">
+              <p><strong>${index + 1}. ${item.severity}</strong></p>
+              <p>${item.summary}</p>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
     async function callApi(log) {
+      const mode = document.getElementById("mode").value;
       const response = await fetch(
         "http://127.0.0.1:8000/analyze",
         {
@@ -112,7 +175,8 @@
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            log: log
+            log: log,
+            mode: mode
           })
         }
       );
@@ -160,6 +224,9 @@
         }
 
         renderResult(data);
+
+        historyList.unshift(data);
+        renderHistory();
       } catch (error) {
         console.error(error);
         showError("通信エラーが発生しました。APIサーバーが起動しているか確認してください。");
@@ -167,6 +234,7 @@
     }
    
     loadConfig();
+    renderHistory();
   </script>
 </body>
 </html>

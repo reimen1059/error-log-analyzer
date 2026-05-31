@@ -1,0 +1,16 @@
+[
+  {
+    "keywords": [
+      {
+        "word": "timeout",
+        "weight": 3
+      },
+      {
+        "word": "timed out",
+        "weight": 5
+      }
+    ],
+    "title": "Timeout Error",
+    "content": "TIMEOUT-CHECK-001 を確認してください"
+  }
+]

@@ -42,3 +42,11 @@ button:disabled {
     word-break: break-word;
     white-space: normal;
 }
+
+.history-item {
+    background-color: #ffffff;
+    padding: 12px;
+    margin-top: 10px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+}
