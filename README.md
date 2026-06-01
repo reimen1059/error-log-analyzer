@@ -1,140 +1,324 @@
-# Error Log Analyzer
+# エラーログ解析AI
 
-Bedrock + Claude + FastAPI を使用したエラーログ解析ツールです。
+## 概要
 
-## 機能
+エラーログ解析AIは、LLM（Claude）とRAG（Retrieval-Augmented Generation）を利用して、エラーログを解析するアプリケーションです。
 
-- エラーログ解析
-- severity判定（low / medium / high）
-- 原因分析
-- 解決方法提示
-- 再発防止策提示
-- ログファイルアップロード（.txt / .log）
-- 文字数制限
-- エラーハンドリング
+入力されたログに対して以下を返却します。
 
-## 使用技術
+* severity（重要度）
+* summary（概要）
+* cause（原因）
+* solution（解決策）
+* prevention（再発防止策）
 
-- Python
-- FastAPI
-- Amazon Bedrock
-- Claude
-- HTML / CSS / JavaScript
+本プロジェクトでは、単純なLLM API利用ではなく、以下のような **AIエンジニア寄りの実装と品質改善** を目的として開発しました。
 
-## 起動方法
-
-1. 仮想環境を有効化
-```bash
-venv\Scripts\activate
-```
-
-2.  ライブラリインストール
-```bash
-pip install -r requirements.txt
-```
-
-3.  FastAPI起動
-```bash
-uvicorn api:app --reload
-```
-
-4.  index.html をブラウザで開く
-
-## 今後追加予定
-- UI改善（レイアウト最適化）
-- ログ履歴保存
-- Docker対応
-- デプロイ対応
-
-## 更新内容(2026/5/31)
-
-### RAG（簡易版）改善
-
-エラーログ解析時に、`knowledge_base.json` を参照する簡易RAGを実装。
-※ knowledge_base.sample.json はサンプルデータです
-
-#### 特徴
-
-* keyword一致検索
-* weighted keyword（重み付きキーワード）
-* score（重み合計）
-* match_rate（一致率）
-* rerank（score + match_rate）
-
-#### retrievalロジック
-
-ログとナレッジのキーワード一致を評価し、関連度の高いナレッジを上位表示。
-
-評価指標：
-
-* score：一致したキーワードの重み合計
-* match_rate：一致率（matched_keywords / total_keywords）
-
-取得ナレッジは上位3件に制限。
+* Prompt設計
+* RAG実装
+* retrieval evaluation（検索品質評価）
+* fallback設計
+* output guard（JSON制御）
+* 品質改善サイクル
 
 ---
 
-### 参照ナレッジの可視化
+## 開発目的
 
-フロント側で、RAGが参照したナレッジを表示。
+目的は「AIを使ったアプリを作ること」ではなく、**AI開発経験を積むこと**です。
 
-表示内容：
+特に以下を実践することを目的に開発しました。
 
-* title
-* score
+* LLM制御
+* Prompt設計
+* RAG実装
+* retrieval evaluation
+* 品質改善
+* fallback制御
+* output安定化
+
+単にAPIを呼び出すだけではなく、
+
+> 「評価 → 問題発見 → 改善 → 再評価」
+
+という改善サイクルを経験することを重視しています。
+
+---
+
+## システム構成
+
+```text
+Frontend (HTML / CSS / JavaScript)
+                ↓
+         FastAPI (Python)
+                ↓
+      search_knowledge()
+           (RAG検索)
+                ↓
+      Bedrock + Claude
+                ↓
+          JSONレスポンス
+```
+
+### 使用技術
+
+| 分類       | 技術                      |
+| -------- | ----------------------- |
+| Backend  | Python / FastAPI        |
+| LLM      | Amazon Bedrock / Claude |
+| Frontend | HTML / CSS / JavaScript |
+| RAG      | knowledge_base.json     |
+| API      | REST API                |
+
+---
+
+## 主な機能
+
+### 1. エラーログ解析
+
+入力ログを解析し、構造化されたJSONを返却します。
+
+返却例：
+
+```json
+{
+  "severity": "high",
+  "summary": "Database connection timeout occurred",
+  "cause": "Connection pool exhaustion",
+  "solution": "Increase connection pool size and retry settings",
+  "prevention": "Implement connection monitoring"
+}
+```
+
+返却項目：
+
+* severity
+* summary
+* cause
+* solution
+* prevention
+
+---
+
+### 2. RAG（Retrieval-Augmented Generation）
+
+Claude呼び出し前に `knowledge_base.json` を検索し、関連ナレッジを参照します。
+
+#### knowledge構造
+
+```json
+[
+  {
+    "title": "Timeout Error",
+    "keywords": [
+      {
+        "word": "timeout",
+        "weight": 1
+      },
+      {
+        "word": "timed out",
+        "weight": 3
+      }
+    ],
+    "content": "対応方法..."
+  }
+]
+```
+
+#### Retrievalフロー
+
+```text
+入力ログ
+   ↓
+keyword match
+   ↓
+score算出（weight）
+   ↓
+match_rate算出
+   ↓
+rerank
+   ↓
+threshold判定
+   ↓
+Top3取得
+```
+
+実装済み機能：
+
+* keyword match
+* weighted keyword
+* score算出
 * match_rate
-* matched_keywords
-
-これにより、LLM出力の根拠（explainability）を確認可能。
-
----
-
-### Claudeプロンプト改善
-
-RAGで取得したナレッジを構造化してClaudeへ渡すよう改善。
-
-以下を考慮：
-
-* score順
-* 一致率
-* 一致キーワード
-* ナレッジ内容
-
-また、スコアの高いナレッジを優先利用するようプロンプトを改善。
+* rerank
+* threshold filtering
+* Top3取得
 
 ---
 
-### Claude only / RAG + Claude モード
+### 3. Fallback制御
 
-解析モードを追加。
+knowledge hit が存在しない場合：
 
-#### Claude only
+```text
+RAG検索
+   ↓
+knowledge hitなし
+   ↓
+Claude fallback
+```
 
-ログのみをClaudeに渡して解析。
+として通常のLLM解析を実施します。
 
-#### RAG + Claude
+利用モード：
 
-RAG検索結果をプロンプトに注入し、社内ナレッジを反映した解析を実施。
+* `rag`
+* `claude`
+* `claude_fallback`
 
-同一ログで解析品質比較が可能。
+これにより、retrieval失敗時でも解析不能にならない構成にしています。
 
 ---
 
-### retrieval evaluation（簡易評価機構）
+### 4. Output Guard（JSON安定化）
 
-検索品質確認用のテスト機構を追加。
+LLMの出力が不安定になる問題に対して、JSON安定化を実施しています。
 
-#### 評価内容
+対応内容：
+
+* JSON only prompt
+* Markdown除去
+* JSON抽出（Regex）
+* JSON Parse validation
+
+これにより、Claudeが余計な説明文を返却した場合でも安定してAPIレスポンス化できます。
+
+---
+
+## Retrieval Evaluation（検索品質評価）
+
+検索品質を評価するため、retrieval evaluation機能を実装しました。
+
+評価内容：
 
 * PASS / FAIL
 * fail reason
 * pass rate
 * failed cases
 
-#### fail reason
+テストケース数：
 
-* success
-* no matched knowledge
-* unexpected retrieval
+```text
+20件
+```
 
-これにより、RAG検索品質の回帰確認が可能。
+---
+
+## 品質改善（Threshold導入）
+
+### 問題
+
+初期実装では、弱い単語一致でもknowledgeを取得してしまい、誤検出が発生していました。
+
+例：
+
+```text
+timeout
+→ Timeout Error が取得される
+
+refused
+→ Connection Refused が取得される
+```
+
+これは部分一致によるノイズ取得でした。
+
+---
+
+### 対応
+
+Retrieval結果に対して threshold を導入しました。
+
+```python
+MIN_SCORE_THRESHOLD = 3
+```
+
+以下の条件を満たすknowledgeのみ採用：
+
+```text
+score >= threshold
+```
+
+---
+
+### 評価結果
+
+| 条件            | Pass Rate |
+| ------------- | --------: |
+| threshold = 0 |     90.0% |
+| threshold = 3 |    100.0% |
+
+テストケース数：
+
+```text
+20件
+```
+
+比較例：
+
+| ログ                | threshold=0          | threshold=3          |
+| ----------------- | -------------------- | -------------------- |
+| refused           | Connection Refused   | fallback             |
+| timeout           | Timeout Error        | fallback             |
+| request timed out | Timeout Error        | Timeout Error        |
+| authentication    | Authentication Error | Authentication Error |
+
+改善結果：
+
+* 弱一致による誤取得を低減
+* 明確なログは維持
+* retrieval品質改善
+
+---
+
+## RAG vs Claude 比較
+
+Claude only と RAG + Claude の比較評価を実施しました。
+
+| モード          |           結果 |
+| ------------ | -----------: |
+| Claude only  | 0 / 2 passed |
+| RAG + Claude | 2 / 2 passed |
+
+RAGを利用することで、knowledgeを参照した回答品質改善を確認できました。
+
+---
+
+## 今後の改善
+
+今後の改善候補：
+
+* Semantic Search
+* Embedding検索
+* Vector DB化
+* 評価ケース追加
+* UI改善
+* knowledge自動更新
+
+---
+
+## 学んだこと
+
+本プロジェクトでは以下を経験しました。
+
+* LLM利用
+* Prompt設計
+* RAG実装
+* Retrieval Evaluation
+* 品質改善サイクル
+* Fallback設計
+* Output Guard
+
+単なる「AI APIを呼ぶアプリ」ではなく、
+
+> 評価し、改善し、品質を向上させるAIシステム開発
+
+を目的に実装しました。
