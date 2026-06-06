@@ -2,46 +2,108 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>エラーログ解析ツール</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>エラーログ解析AI</title>
 
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>エラーログ解析ツール</h1>
-  <p>※ファイルを選択した場合は、テキスト欄よりファイル内容を優先して解析します。</p>
-  <textarea id="log" rows="10" cols="80" placeholder="エラーログを貼り付けてください"></textarea>
-  <p id="charCount">0 / 500 文字</p>
-  <br />
-  <input type="file" id="logFile" accept=".log,.txt" />
-  <br />
-  <br />
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">RAG + Claude Error Analysis</p>
+        <h1>エラーログ解析AI</h1>
+        <p class="lead">
+          ログを入力すると、重要度・原因・解決策・再発防止策を構造化して表示します。
+        </p>
+      </div>
+      <div class="header-metrics" aria-label="実装ポイント">
+        <span>RAG</span>
+        <span>Fallback</span>
+        <span>JSON Guard</span>
+      </div>
+    </header>
 
-  <select id="mode">
-  <option value="rag">
-    RAG + Claude
-  </option>
-  <option value="claude">
-    Claude only
-  </option>
-</select>
-  <button id="analyzeButton" onclick="analyzeLog()">解析する</button>
+    <section class="workspace">
+      <section class="panel input-panel" aria-labelledby="inputTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Input</p>
+            <h2 id="inputTitle">解析ログ</h2>
+          </div>
+          <p id="charCount" class="char-count">0 / 600 文字</p>
+        </div>
 
-  <h2>解析結果</h2>
-  <pre id="result"></pre>
+        <textarea id="log" placeholder="エラーログを貼り付けてください"></textarea>
 
-  <h2>解析履歴</h2>
-  <div id="history"></div>
+        <div class="control-bar">
+          <label class="file-control">
+            <span>ファイル選択</span>
+            <input type="file" id="logFile" accept=".log,.txt" />
+          </label>
+
+          <label class="mode-control">
+            <span>解析モード</span>
+            <select id="mode">
+              <option value="rag">RAG + Claude</option>
+              <option value="claude">Claude only</option>
+            </select>
+          </label>
+
+          <button id="analyzeButton" onclick="analyzeLog()">解析する</button>
+        </div>
+
+        <p class="hint">
+          ファイルを選択した場合は、テキスト欄に内容を読み込んでから解析します。
+        </p>
+      </section>
+
+      <section class="panel result-panel" aria-labelledby="resultTitle">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Result</p>
+            <h2 id="resultTitle">解析結果</h2>
+          </div>
+        </div>
+        <div id="result" class="empty-state">
+          ログを入力して解析を実行すると、結果がここに表示されます。
+        </div>
+      </section>
+    </section>
+
+    <section class="panel history-panel" aria-labelledby="historyTitle">
+      <div class="section-heading">
+        <div>
+          <p class="section-label">History</p>
+          <h2 id="historyTitle">解析履歴</h2>
+        </div>
+      </div>
+      <div id="history"></div>
+    </section>
+  </main>
 
   <script>
-      const textArea = document.getElementById("log");
-      const fileInput = document.getElementById("logFile");
-      const resultArea = document.getElementById("result");
-      const charCount = document.getElementById("charCount");
-      const analyzeButton = document.getElementById("analyzeButton");
-      const historyArea = document.getElementById("history");
+    const textArea = document.getElementById("log");
+    const fileInput = document.getElementById("logFile");
+    const resultArea = document.getElementById("result");
+    const charCount = document.getElementById("charCount");
+    const analyzeButton = document.getElementById("analyzeButton");
+    const historyArea = document.getElementById("history");
 
-      let MAX_LOG_LENGTH = 0;
-      let historyList = [];
+    let MAX_LOG_LENGTH = 600;
+    let historyList = [];
+
+    const severityMap = {
+      high: { label: "High", className: "severity-high", icon: "!" },
+      medium: { label: "Medium", className: "severity-medium", icon: "!" },
+      low: { label: "Low", className: "severity-low", icon: "i" }
+    };
+
+    const modeLabels = {
+      rag: "RAG + Claude",
+      claude: "Claude only",
+      claude_fallback: "Claude fallback"
+    };
 
     fileInput.addEventListener("change", async function () {
       if (fileInput.files.length === 0) {
@@ -57,109 +119,167 @@
 
     textArea.addEventListener("input", updateCharCount);
 
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function getSeverityInfo(severity) {
+      return severityMap[severity] || {
+        label: escapeHtml(severity || "Unknown"),
+        className: "severity-unknown",
+        icon: "?"
+      };
+    }
+
+    function formatMode(mode) {
+      return modeLabels[mode] || mode || "unknown";
+    }
+
     function updateCharCount() {
       const length = textArea.value.length;
       charCount.textContent = `${length} / ${MAX_LOG_LENGTH} 文字`;
+      charCount.classList.remove("is-warning", "is-error");
 
-      if (length > MAX_LOG_LENGTH) {
-        charCount.style.color = "red";
+      if (MAX_LOG_LENGTH > 0 && length > MAX_LOG_LENGTH) {
+        charCount.classList.add("is-error");
         analyzeButton.disabled = true;
+      } else if (MAX_LOG_LENGTH > 0 && length > MAX_LOG_LENGTH * 0.8) {
+        charCount.classList.add("is-warning");
+        analyzeButton.disabled = false;
       } else {
-        charCount.style.color = "black";
         analyzeButton.disabled = false;
       }
     }
 
-    function renderResult(data) {
-      let severityColor = "";
-      let severityIcon = "";
-
-      if (data.severity === "high") {
-        severityColor = "red";
-        severityIcon = "🔴";
-      } else if (data.severity === "medium") {
-        severityColor = "orange";
-        severityIcon = "🟡";
-      } else {
-        severityColor = "green";
-        severityIcon = "🟢";
+    function renderReferences(data) {
+      if (data.mode !== "rag") {
+        return "";
       }
 
-      const referencesHtml =
-        data.mode === "rag"
-          ? (
-              data.references && data.references.length > 0
-                ? `
-                  <div class="references">
-                    <h3>参照したナレッジ</h3>
-                    <ul>
-                      ${data.references.map(ref => `
-                        <li>
-                          <strong>${ref.title}</strong><br>
-                          スコア: ${ref.score}<br>
-                          一致率: ${(ref.match_rate * 100).toFixed(0)}%<br>
-                          一致キーワード: ${ref.matched_keywords.join(", ")}
-                        </li>
-                      `).join("")}
-                    </ul>
-                  </div>
-                `
-                : `
-                  <div class="references">
-                    <h3>参照したナレッジ</h3>
-                    <p>該当なし</p>
-                  </div>
-                `
-            )
-          : "";
+      if (!data.references || data.references.length === 0) {
+        return `
+          <section class="references empty-reference">
+            <div class="result-section-title">
+              <span>参照ナレッジ</span>
+              <strong>${escapeHtml(formatMode(data.actual_mode))}</strong>
+            </div>
+            <p>一致するナレッジはありませんでした。Claude fallbackで解析しています。</p>
+          </section>
+        `;
+      }
 
+      return `
+        <section class="references">
+          <div class="result-section-title">
+            <span>参照ナレッジ</span>
+            <strong>${data.references.length}件</strong>
+          </div>
+          <div class="reference-list">
+            ${data.references.map(ref => {
+              const matchRate = Math.round(ref.match_rate * 100);
+              const keywords = ref.matched_keywords || [];
+
+              return `
+                <article class="reference-card">
+                  <div class="reference-head">
+                    <h4>${escapeHtml(ref.title)}</h4>
+                    <span class="score-badge">score ${escapeHtml(ref.score)}</span>
+                  </div>
+                  <div class="match-meter" aria-label="一致率 ${matchRate}%">
+                    <span style="width: ${matchRate}%"></span>
+                  </div>
+                  <p class="match-rate">一致率 ${matchRate}%</p>
+                  <div class="keyword-list">
+                    ${keywords.map(keyword => `<span>${escapeHtml(keyword)}</span>`).join("")}
+                  </div>
+                </article>
+              `;
+            }).join("")}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderResult(data) {
+      const severityInfo = getSeverityInfo(data.severity);
+
+      resultArea.className = "result-content";
       resultArea.innerHTML = `
-        <h3>解析結果</h3>
+        <div class="result-summary">
+          <div class="severity-badge ${severityInfo.className}">
+            <span>${severityInfo.icon}</span>
+            ${severityInfo.label}
+          </div>
+          <div class="mode-stack">
+            <span>${escapeHtml(formatMode(data.actual_mode))}</span>
+            <small>requested: ${escapeHtml(formatMode(data.mode))}</small>
+          </div>
+        </div>
 
-        <p><strong>成功:</strong> ${data.success}</p>
-        <p><strong>Severity:</strong><span style="color:${severityColor}">${severityIcon} ${data.severity}</span></p>
+        <div class="analysis-grid">
+          <section class="analysis-card summary-card">
+            <h3>概要</h3>
+            <p>${escapeHtml(data.summary)}</p>
+          </section>
+          <section class="analysis-card">
+            <h3>原因</h3>
+            <p>${escapeHtml(data.cause)}</p>
+          </section>
+          <section class="analysis-card">
+            <h3>解決策</h3>
+            <p>${escapeHtml(data.solution)}</p>
+          </section>
+          <section class="analysis-card">
+            <h3>再発防止策</h3>
+            <p>${escapeHtml(data.prevention)}</p>
+          </section>
+        </div>
 
-        <h4>概要</h4>
-        <p>${data.summary}</p>
-        <h4>原因</h4>
-        <p>${data.cause}</p>
-        <h4>解決方法</h4>
-        <p>${data.solution}</p>
-        <h4>再発防止</h4>
-        <p>${data.prevention}</p>
-        <hr>
+        <div class="token-row">
+          <span>success: ${escapeHtml(data.success)}</span>
+          <span>input: ${escapeHtml(data.input_tokens)}</span>
+          <span>output: ${escapeHtml(data.output_tokens)}</span>
+          <span>total: ${escapeHtml(data.total_tokens)}</span>
+        </div>
 
-        <p>
-        トークン数:
-        入力 ${data.input_tokens} /
-        出力 ${data.output_tokens} /
-        合計 ${data.total_tokens}
-        </p>
-        ${referencesHtml}
-        `;      
+        ${renderReferences(data)}
+      `;
     }
 
     function showError(message) {
+      resultArea.className = "error-state";
       resultArea.innerHTML = `
-        <p style="color:red;">
-          エラー: ${message}
-        </p>
+        <strong>エラー</strong>
+        <p>${escapeHtml(message)}</p>
       `;
     }
 
     function renderHistory() {
       if (historyList.length === 0) {
-        historyArea.innerHTML = "<p>履歴はまだありません。</p>";
+        historyArea.innerHTML = '<p class="empty-history">履歴はまだありません。</p>';
         return;
       }
 
       historyArea.innerHTML = historyList
         .map((item, index) => {
+          const severityInfo = getSeverityInfo(item.severity);
+
           return `
-            <div class="history-item">
-              <p><strong>${index + 1}. ${item.severity}</strong></p>
-              <p>${item.summary}</p>
-            </div>
+            <article class="history-item">
+              <div class="history-meta">
+                <span class="mini-severity ${severityInfo.className}">
+                  ${severityInfo.label}
+                </span>
+                <span>${index + 1}</span>
+                <span>${escapeHtml(formatMode(item.actual_mode))}</span>
+              </div>
+              <p>${escapeHtml(item.summary)}</p>
+            </article>
           `;
         })
         .join("");
@@ -188,16 +308,22 @@
     }
 
     async function loadConfig() {
-      const response = await fetch(
-        "http://127.0.0.1:8000/config"
-      );
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/config"
+        );
 
-      const data = await response.json();
-      MAX_LOG_LENGTH = data.max_log_length;
+        const data = await response.json();
+        MAX_LOG_LENGTH = data.max_log_length;
+      } catch (error) {
+        console.warn("Config API is unavailable. Using default max length.", error);
+      }
+
       updateCharCount();
     }
 
     async function analyzeLog() {
+      resultArea.className = "loading-state";
       resultArea.textContent = "解析中...";
 
       const log = textArea.value;
@@ -209,11 +335,11 @@
         if (!response.ok) {
           let errorMessage = data.detail;
 
-          if (data.detail.includes("log is too long")) {
+          if (data.detail.includes("log is too long") || data.detail.includes("長すぎ")) {
             errorMessage =
-              "ログが長すぎます。";
+              "ログが長すぎます。文字数を減らしてから再度実行してください。";
           } else if (
-            data.detail.includes("log is empty")
+            data.detail.includes("log is empty") || data.detail.includes("入力")
           ) {
             errorMessage =
               "ログを入力してください。";
@@ -232,7 +358,7 @@
         showError("通信エラーが発生しました。APIサーバーが起動しているか確認してください。");
       }
     }
-   
+
     loadConfig();
     renderHistory();
   </script>
